@@ -11,6 +11,9 @@ import {
 import toast from 'react-hot-toast'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../lib/utils'
+import { Banknote, History } from 'lucide-react'
+
+const WITHDRAW_EMPTY = { amount: '', bankName: '', accountNumber: '', ifscCode: '', accountHolder: '' }
 
 const CATEGORIES = ['Poultry Farming', 'Sheep/Goat Farming', 'Fish Farming', 'Organic Fertilizers', 'Indoor Farming', 'Outdoor Equipment']
 
@@ -23,6 +26,8 @@ export default function SellerDashboard() {
   const [editingProduct, setEditingProduct] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [uploading, setUploading] = useState(false)
+  const [showWithdraw, setShowWithdraw] = useState(false)
+  const [withdrawForm, setWithdrawForm] = useState(WITHDRAW_EMPTY)
   const qc = useQueryClient()
 
   const { data: products, isLoading } = useQuery({
@@ -44,6 +49,16 @@ export default function SellerDashboard() {
         .eq('seller_id', user.id)
         .order('orders(created_at)', { ascending: false })
         .limit(30)
+      if (error) throw error
+      return data
+    },
+    enabled: !!user,
+  })
+
+  const { data: withdrawals } = useQuery({
+    queryKey: ['seller-withdrawals', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('withdrawal_requests').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
       if (error) throw error
       return data
     },
@@ -99,6 +114,30 @@ export default function SellerDashboard() {
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['seller-products'] }); toast.success('Product deleted') },
   })
+  
+  const withdrawMutation = useMutation({
+    mutationFn: async (data) => {
+      const { error } = await supabase.from('withdrawal_requests').insert({
+        user_id: user.id,
+        amount: parseFloat(data.amount),
+        bank_name: data.bankName,
+        account_number: data.accountNumber,
+        ifsc_code: data.ifscCode,
+        account_holder: data.accountHolder
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['seller-withdrawals', user?.id] })
+      qc.invalidateQueries({ queryKey: ['user-profile'] }) // profile balance
+      toast.success('Withdrawal request submitted! 🏦 Our team will process it soon.')
+      setShowWithdraw(false)
+      setWithdrawForm(WITHDRAW_EMPTY)
+    },
+    onError: (err) => {
+      toast.error(err.message || 'Failed to submit request')
+    }
+  })
 
   async function handleImageUpload(e) {
     const file = e.target.files[0]
@@ -146,7 +185,21 @@ export default function SellerDashboard() {
   const stats = [
     { icon: Package, label: 'Active Products', value: products?.filter(p => p.quantity > 0).length || 0, color: 'text-primary-400', bg: 'bg-primary-500/10' },
     { icon: ShoppingBag, label: 'Pending Orders', value: orders?.filter(o => o.orders?.status === 'pending').length || 0, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-    { icon: DollarSign, label: 'Wallet Balance', value: `₹${(profile?.wallet_balance || 0).toLocaleString('en-IN')}`, color: 'text-earth-400', bg: 'bg-earth-500/10' },
+    { 
+      icon: DollarSign, 
+      label: 'Wallet Balance', 
+      value: `₹${(profile?.wallet_balance || 0).toLocaleString('en-IN')}`, 
+      color: 'text-earth-400', 
+      bg: 'bg-earth-500/10',
+      action: (
+        <button 
+          onClick={() => setShowWithdraw(true)}
+          className="mt-4 w-full py-2 bg-earth-500/20 hover:bg-earth-500/30 text-earth-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all border border-earth-500/20"
+        >
+          Withdraw Funds
+        </button>
+      )
+    },
     { icon: TrendingUp, label: 'Total Sales', value: orders?.length || 0, color: 'text-purple-400', bg: 'bg-purple-500/10' },
   ]
 
@@ -187,13 +240,17 @@ export default function SellerDashboard() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
-              className="group bg-dark-800/40 border border-white/5 p-8 rounded-[2rem] hover:border-white/10 transition-all duration-300"
+              className="group bg-dark-800/40 border border-white/5 p-8 rounded-[2rem] hover:border-white/10 transition-all duration-300 flex flex-col"
             >
               <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center mb-6 transition-transform group-hover:scale-110 duration-500", bg)}>
                 <Icon size={24} className={color} />
               </div>
-              <div className="text-3xl font-display font-black text-white mb-1">{value}</div>
-              <div className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">{label}</div>
+              <div className="flex-1">
+                <div className="text-3xl font-display font-black text-white mb-1">{value}</div>
+                <div className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">{label}</div>
+              </div>
+              {/* @ts-ignore */}
+              {stats[idx].action}
             </motion.div>
           ))}
         </div>
@@ -203,6 +260,7 @@ export default function SellerDashboard() {
           {[
             { id: 'products', label: 'My Products', icon: Package },
             { id: 'orders', label: 'Recent Orders', icon: ShoppingBag },
+            { id: 'withdrawals', label: 'Withrawals', icon: History },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -295,7 +353,7 @@ export default function SellerDashboard() {
                 </div>
               ))}
             </motion.div>
-          ) : (
+          ) : tab === 'orders' ? (
             <motion.div
               key="orders-tab"
               initial={{ opacity: 0, y: 20 }}
@@ -388,6 +446,51 @@ export default function SellerDashboard() {
                       </div>
                     )}
                     <p className="text-[10px] text-center text-gray-600 mt-2">Updating status notifies the buyer instantly.</p>
+                  </div>
+                </div>
+              ))}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="withdrawals-tab"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-4"
+            >
+              {!withdrawals || withdrawals.length === 0 ? (
+                <div className="py-24 text-center bg-dark-800/20 border border-dashed border-white/10 rounded-[3rem]">
+                  <Banknote size={48} className="text-gray-700 mx-auto mb-6" />
+                  <h3 className="text-xl font-bold text-white">No Withdrawals Yet</h3>
+                  <p className="text-gray-500 mt-2">When you request a bank transfer, it will appear here.</p>
+                </div>
+              ) : withdrawals.map((w) => (
+                <div key={w.id} className="bg-dark-800/40 border border-white/5 rounded-3xl p-8 flex flex-col md:flex-row gap-8 items-center justify-between hover:border-white/10 transition-all">
+                  <div className="flex items-center gap-6">
+                    <div className="w-14 h-14 rounded-2xl bg-primary-500/10 flex items-center justify-center text-primary-400">
+                      <Banknote size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className="text-xl font-bold text-white">₹{w.amount.toLocaleString()}</span>
+                        <span className={cn(
+                          "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                          w.status === 'processed' ? "bg-primary-500 text-white" :
+                          w.status === 'pending' ? "bg-yellow-500 text-black" : "bg-red-500 text-white"
+                        )}>
+                          {w.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 font-medium">
+                        {w.bank_name} • Account Ending in {w.account_number.slice(-4)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-gray-600 font-bold mb-1">Requested On</div>
+                    <div className="text-xs text-gray-400">
+                      {new Date(w.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -541,6 +644,129 @@ export default function SellerDashboard() {
                         <div className="w-6 h-6 border-3 border-white/30 border-t-white rounded-full animate-spin mx-auto" />
                       ) : (
                         <>{editingProduct ? 'Update Product' : 'Create Product'}</>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Withdrawal Modal */}
+        <AnimatePresence>
+          {showWithdraw && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setShowWithdraw(false)}
+                className="absolute inset-0 bg-dark-900/90 backdrop-blur-xl" 
+              />
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="relative w-full max-w-xl bg-dark-800 border border-white/10 rounded-[3rem] shadow-2xl overflow-hidden"
+              >
+                <div className="px-10 py-8 border-b border-white/5 flex items-center justify-between bg-white/5">
+                  <div>
+                    <h2 className="text-2xl font-display font-bold text-white">Withdraw Funds</h2>
+                    <p className="text-gray-500 text-sm mt-1">Transfer your earnings to your bank account.</p>
+                  </div>
+                  <button onClick={() => setShowWithdraw(false)} className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 text-gray-400 hover:text-white transition-all">
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (parseFloat(withdrawForm.amount) > profile?.wallet_balance) {
+                      toast.error('Insufficient balance');
+                      return;
+                    }
+                    withdrawMutation.mutate(withdrawForm);
+                  }} 
+                  className="p-10 space-y-6"
+                >
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 px-1">Withdrawal Amount (₹)</label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      placeholder="Enter amount to withdraw"
+                      value={withdrawForm.amount}
+                      onChange={e => setWithdrawForm({ ...withdrawForm, amount: e.target.value })}
+                      className="w-full bg-dark-700 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-earth-500 transition-all font-bold text-lg"
+                    />
+                    <p className="text-[10px] text-gray-600 px-1">Available Balance: ₹{profile?.wallet_balance?.toLocaleString()}</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 px-1">Account Holder Name</label>
+                    <input
+                      required
+                      placeholder="Name as per bank records"
+                      value={withdrawForm.accountHolder}
+                      onChange={e => setWithdrawForm({ ...withdrawForm, accountHolder: e.target.value })}
+                      className="w-full bg-dark-700 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-earth-500 transition-all"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 px-1">Bank Name</label>
+                      <input
+                        required
+                        placeholder="e.g. HDFC Bank"
+                        value={withdrawForm.bankName}
+                        onChange={e => setWithdrawForm({ ...withdrawForm, bankName: e.target.value })}
+                        className="w-full bg-dark-700 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-earth-500 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 px-1">IFSC Code</label>
+                      <input
+                        required
+                        placeholder="e.g. HDFC0001234"
+                        value={withdrawForm.ifscCode}
+                        onChange={e => setWithdrawForm({ ...withdrawForm, ifscCode: e.target.value })}
+                        className="w-full bg-dark-700 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-earth-500 transition-all uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 px-1">Account Number</label>
+                    <input
+                      required
+                      placeholder="Enter your bank account number"
+                      value={withdrawForm.accountNumber}
+                      onChange={e => setWithdrawForm({ ...withdrawForm, accountNumber: e.target.value })}
+                      className="w-full bg-dark-700 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-earth-500 transition-all"
+                    />
+                  </div>
+
+                  <div className="pt-6 flex gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowWithdraw(false)}
+                      className="flex-1 py-4 px-6 bg-dark-700 hover:bg-dark-600 text-gray-300 font-bold rounded-2xl transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={withdrawMutation.isPending}
+                      className="flex-[2] btn-primary py-4 text-lg bg-earth-500 hover:bg-earth-400 shadow-glow-earth/20"
+                    >
+                      {withdrawMutation.isPending ? (
+                        <div className="w-6 h-6 border-3 border-white/30 border-t-white rounded-full animate-spin mx-auto" />
+                      ) : (
+                        'Confirm Withdrawal'
                       )}
                     </button>
                   </div>

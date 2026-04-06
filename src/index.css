@@ -16,11 +16,12 @@
   }
 
   body {
-    @apply bg-dark-900 text-gray-100 font-sans antialiased;
-    background-image: radial-gradient(ellipse at 20% 50%, rgba(34,197,94,0.07) 0%, transparent 50%),
-                      radial-gradient(ellipse at 80% 20%, rgba(235,117,18,0.05) 0%, transparent 40%);
+    @apply bg-dark-950 text-gray-100 font-sans antialiased;
+    background-image: radial-gradient(ellipse at 20% 50%, rgba(20,184,166,0.08) 0%, transparent 60%),
+                      radial-gradient(ellipse at 80% 20%, rgba(245,158,11,0.06) 0%, transparent 50%);
     min-height: 100vh;
   }
+
 
   ::-webkit-scrollbar {
     width: 6px;
@@ -35,7 +36,7 @@
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-500 
            text-white font-semibold rounded-xl transition-all duration-200 
-           hover:shadow-glow-green hover:-translate-y-0.5 active:translate-y-0 cursor-pointer;
+           hover:shadow-glow-primary hover:-translate-y-0.5 active:translate-y-0 cursor-pointer;
   }
 
   .btn-secondary {

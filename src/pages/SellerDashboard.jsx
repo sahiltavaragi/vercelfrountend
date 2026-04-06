@@ -54,11 +54,13 @@ export default function SellerDashboard() {
 
   const updateOrderStatusMutation = useMutation({
     mutationFn: async ({ orderId, status }) => {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('orders')
         .update({ status })
         .eq('id', orderId)
+        .select()
       if (error) throw error
+      if (!data || data.length === 0) throw new Error('Not authorized to update this order')
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['seller-orders', user?.id] })

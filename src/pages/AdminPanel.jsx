@@ -21,21 +21,25 @@ export default function AdminPanel() {
   const { data: stats } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: async () => {
-      const [usersRes, productsRes, ordersRes] = await Promise.all([
+      const [usersRes, productsRes, ordersRes, pendingSellersRes, pendingProductsRes, pendingWithdrawalsRes] = await Promise.all([
         supabase.from('users').select('*', { count: 'exact', head: true }),
         supabase.from('products').select('*', { count: 'exact', head: true }),
         supabase.from('orders').select('total_amount'),
-        // supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'seller').eq('is_approved_seller', false),
-        // supabase.from('products').select('*', { count: 'exact', head: true }).eq('approval_status', 'pending'),
+        supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'seller').eq('is_approved_seller', false),
+        supabase.from('products').select('*', { count: 'exact', head: true }).eq('approval_status', 'pending'),
+        supabase.from('withdrawal_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
       ])
       const totalRevenue = ordersRes.data?.reduce((s, o) => s + Number(o.total_amount), 0) || 0
       
-      return [
-        { label: 'Total Users', value: usersRes.count || 0, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-        { label: 'Products', value: productsRes.count || 0, icon: Package, color: 'text-primary-400', bg: 'bg-primary-500/10' },
-        { label: 'Total Orders', value: ordersRes.data?.length || 0, icon: ShoppingBag, color: 'text-earth-400', bg: 'bg-earth-500/10' },
-        { label: 'Revenue', value: `₹${totalRevenue.toLocaleString()}`, icon: TrendingUp, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-      ]
+      return {
+        users: usersRes.count || 0,
+        products: productsRes.count || 0,
+        orders: ordersRes.data?.length || 0,
+        revenue: totalRevenue,
+        pendingSellers: pendingSellersRes.count || 0,
+        pendingProducts: pendingProductsRes.count || 0,
+        pendingWithdrawals: pendingWithdrawalsRes.count || 0,
+      }
     },
   })
 
@@ -101,7 +105,6 @@ export default function AdminPanel() {
     enabled: tab === 'community',
   })
 
-  // ── Wallets ───────────────────────────────────────────────────
   const { data: wallets } = useQuery({
     queryKey: ['admin-wallets'],
     queryFn: async () => {
@@ -113,6 +116,19 @@ export default function AdminPanel() {
       return data
     },
     enabled: tab === 'wallets',
+  })
+
+  const { data: withdrawals } = useQuery({
+    queryKey: ['admin-withdrawals'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('withdrawal_requests')
+        .select('*, users(full_name, email)')
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data
+    },
+    enabled: tab === 'withdrawals',
   })
 
   // ── Mutations ─────────────────────────────────────────────────
@@ -166,17 +182,30 @@ export default function AdminPanel() {
     },
   })
 
+  const withdrawalMutation = useMutation({
+    mutationFn: async ({ id, status }) => {
+      const { error } = await supabase.from('withdrawal_requests').update({ status }).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: (_, { status }) => {
+      qc.invalidateQueries({ queryKey: ['admin-withdrawals'] })
+      qc.invalidateQueries({ queryKey: ['admin-stats'] })
+      toast.success(status === 'processed' ? 'Withdrawal processed! ✅' : 'Withdrawal rejected ❌')
+    },
+  })
+
   function formatDate(d) {
     return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   const TABS = [
-    { id: 'sellers',   label: 'Seller Approvals',  badge: stats?.pendingSellers },
-    { id: 'products',  label: 'Product Approvals',  badge: stats?.pendingProducts },
-    { id: 'orders',    label: 'All Orders' },
-    { id: 'users',     label: 'Users' },
-    { id: 'community', label: 'Community' },
-    { id: 'wallets',   label: 'Wallets' },
+    { id: 'sellers',     label: 'Seller Approvals',  badge: stats?.pendingSellers },
+    { id: 'products',    label: 'Product Approvals', badge: stats?.pendingProducts },
+    { id: 'withdrawals', label: 'Withdrawals',       badge: stats?.pendingWithdrawals },
+    { id: 'orders',      label: 'All Orders' },
+    { id: 'users',       label: 'Users' },
+    { id: 'community',   label: 'Community' },
+    { id: 'wallets',     label: 'Wallets' },
   ]
 
   const STAT_CARDS = [
@@ -213,7 +242,12 @@ export default function AdminPanel() {
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {stats?.map(({ label, value, icon: Icon, color, bg }, idx) => (
+          {[
+            { label: 'Total Users', value: stats?.users || 0, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+            { label: 'Products', value: stats?.products || 0, icon: Package, color: 'text-primary-400', bg: 'bg-primary-500/10' },
+            { label: 'Total Orders', value: stats?.orders || 0, icon: ShoppingBag, color: 'text-earth-400', bg: 'bg-earth-500/10' },
+            { label: 'Revenue', value: `₹${(stats?.revenue || 0).toLocaleString()}`, icon: TrendingUp, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+          ].map(({ label, value, icon: Icon, color, bg }, idx) => (
             <motion.div
               key={label}
               initial={{ opacity: 0, y: 20 }}
@@ -332,6 +366,71 @@ export default function AdminPanel() {
                         <XCircle size={20} />
                       </button>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {tab === 'withdrawals' && (
+              <div className="grid gap-4">
+                {!withdrawals || withdrawals.length === 0 ? (
+                  <EmptyState icon={Wallet} title="No Withdrawal Requests" subtitle="Sellers haven't requested any payouts yet." />
+                ) : withdrawals.map((w) => (
+                  <div key={w.id} className="bg-dark-800/40 border border-white/5 rounded-3xl p-6 md:p-8 flex flex-col md:flex-row gap-8 items-center">
+                    <div className="flex-1 flex items-center gap-6 w-full">
+                      <div className="w-16 h-16 bg-gradient-to-br from-yellow-600 to-yellow-800 rounded-2xl flex items-center justify-center text-xl font-bold text-white shadow-xl">
+                        {w.users?.full_name?.[0] || 'W'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 mb-1">
+                          <h3 className="text-xl font-display font-bold text-white truncate">{w.users?.full_name}</h3>
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                            w.status === 'pending' ? "bg-yellow-900/40 text-yellow-400" :
+                            w.status === 'processed' ? "bg-primary-900/40 text-primary-400" :
+                            "bg-red-900/40 text-red-400"
+                          )}>
+                            {w.status}
+                          </span>
+                        </div>
+                        <p className="text-gray-500 text-sm mb-4">{w.users?.email}</p>
+                        
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-white/5 p-4 rounded-2xl border border-white/5">
+                          <div>
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Amount</p>
+                            <p className="text-lg font-display font-black text-primary-400">₹{w.amount.toLocaleString()}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Bank Name</p>
+                            <p className="text-sm font-bold text-white truncate">{w.bank_name}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Account No</p>
+                            <p className="text-sm font-bold text-white truncate">{w.account_number}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">IFSC Code</p>
+                            <p className="text-sm font-bold text-white">{w.ifsc_code}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    {w.status === 'pending' && (
+                      <div className="flex gap-3 w-full md:w-auto">
+                        <button 
+                          onClick={() => { if (confirm('Mark as processed? Make sure you have transferred the money!')) withdrawalMutation.mutate({ id: w.id, status: 'processed' }) }}
+                          className="flex-1 md:flex-none p-4 bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-2xl hover:bg-primary-500 hover:text-white transition-all shadow-lg shadow-primary-500/10"
+                        >
+                          <CheckCircle size={20} />
+                        </button>
+                        <button 
+                          onClick={() => { if (confirm('Reject this request? Money will be refunded to seller.')) withdrawalMutation.mutate({ id: w.id, status: 'rejected' }) }}
+                          className="flex-1 md:flex-none p-4 bg-red-500/10 text-red-400 border border-red-500/20 rounded-2xl hover:bg-red-500 hover:text-white transition-all shadow-lg shadow-red-500/10"
+                        >
+                          <XCircle size={20} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
